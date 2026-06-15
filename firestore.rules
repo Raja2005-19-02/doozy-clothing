@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+
+    // Authoritative admin check — reads users/{uid}.role from Firestore.
+    // Falls back to the bootstrap email list so the very first sign-in
+    // (before the users doc is created server-side) still works.
+    function isAdmin() {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        || request.auth.token.email in [
+             'doozyclothing006@gmail.com',
+             'Doozy@rook.com'
+           ]
+      );
+    }
+
+    // ── Public reads, admin writes ────────────────────────────
+    match /products/{id}    { allow read: if true; allow write: if isAdmin(); }
+    match /categories/{id}  { allow read: if true; allow write: if isAdmin(); }
+    match /coupons/{id}     { allow read: if true; allow write: if isAdmin(); }
+    match /heroSlides/{id}  { allow read: if true; allow write: if isAdmin(); }
+    match /settings/{id}    { allow read: if true; allow write: if isAdmin(); }
+    match /analytics/{id}   { allow read, write: if isAdmin(); }
+
+    // ── Reviews: signed-in users can submit unapproved; admin moderates ──
+    match /reviews/{id} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.approved == false;
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Orders: user can see/create own; admin sees all ──
+    match /orders/{id} {
+      allow read: if isAdmin()
+                  || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Notifications: admin only (signed-in users may create new_order) ──
+    match /notifications/{id} {
+      allow read, write: if isAdmin();
+      allow create: if isSignedIn()
+                    && request.resource.data.type == 'new_order';
+    }
+
+    // ── User profiles ─────────────────────────────────────────
+    // Users can read/write their own doc EXCEPT the role field — only admins
+    // (or initial bootstrap from email list) can change role.
+    match /users/{uid} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == uid);
+
+      // Create own doc: must NOT set role to "admin" unless email is bootstrap
+      allow create: if isSignedIn() && request.auth.uid == uid && (
+        !('role' in request.resource.data)
+        || request.resource.data.role == 'user'
+        || request.auth.token.email in [
+             'doozyclothing006@gmail.com',
+             'Doozy@rook.com'
+           ]
+      );
+
+      // Update own doc but not role; admins can update anything.
+      allow update: if (isSignedIn() && request.auth.uid == uid
+                       && (!('role' in request.resource.data)
+                           || request.resource.data.role == resource.data.role))
+                    || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Per-user wishlist & cart ─────────────────────────────
+    match /wishlist/{uid} { allow read, write: if isSignedIn() && request.auth.uid == uid; }
+    match /cart/{uid}     { allow read, write: if isSignedIn() && request.auth.uid == uid; }
+  }
+}

@@ -3,7 +3,6 @@
 // current data layer (Firestore in live mode, in-memory in dev).
 
 import {
-  _mockStore,
   deleteCategory,
   deleteCoupon,
   deleteProduct,
@@ -39,7 +38,7 @@ export async function seedSampleData() {
   for (const c of sampleCoupons) {
     await upsertCoupon(c);
   }
-  // Reviews — mock store direct push (db.createReview always adds new IDs)
+  // Reviews — requires Firestore; skipped when Firebase is not configured
   if (firebaseEnabled) {
     const { collection, addDoc } = await import("firebase/firestore");
     const { db } = await import("./firebase");
@@ -48,8 +47,6 @@ export async function seedSampleData() {
         await addDoc(collection(db!, "reviews"), r);
       } catch {}
     }
-  } else {
-    for (const r of sampleReviews) _mockStore.reviews.unshift(r);
   }
   // Hero slides → store inside settings
   await updateSettings({ heroSlides: sampleHeroSlides });
